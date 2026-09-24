@@ -4,120 +4,147 @@ const ctx = canvas.getContext('2d');
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-});
+let words = [];
+let heartTargets = [];
+let formationIndex = 0;
+let animationState = 'idle'; // idle, forming, formed, fading
+let fadeTimer = 0;
 
-const floatParticles = [];
-const burstParticles = [];
-const FLOAT_COUNT = 140;
-
-const BLUE_SHADES = [
-    "#3b82f6",
-    "#60a5fa",
-    "#93c5fd",
-    "#2563eb",
-    "#bfdbfe",
-    "#1d4ed8"
-];
-
-class Particle {
-    constructor(x, y, type) {
-        this.x = x || Math.random() * canvas.width;
-        this.y = y || Math.random() * canvas.height;
-        this.type = type;
-        this.color = BLUE_SHADES[Math.floor(Math.random() * BLUE_SHADES.length)];
-        
-        if (type === "float") {
-            this.size = Math.random() * 2 + 1;
-            this.speedY = -Math.random() * 1 - 0.5;
-            this.speedX = (Math.random() - 0.5) * 0.5;
-            this.life = Math.random();
-            this.maxLife = 100;
-        } else {
-            // Forma del corazón matemático para el estallido
-            const t = Math.random() * Math.PI * 2;
-            this.x = x;
-            this.y = y;
-            
-            // Ecuación paramétrica del corazón
-            const heartX = 16 * Math.pow(Math.sin(t), 3);
-            const heartY = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
-            
-            const scale = Math.random() * 12 + 8;
-            this.destX = x + heartX * (scale / 16);
-            this.destY = y + heartY * (scale / 16);
-            
-            const angle = Math.atan2(this.destY - y, this.destX - x);
-            const speed = Math.random() * 6 + 2;
-            
-            this.speedX = Math.cos(angle) * speed;
-            this.speedY = Math.sin(angle) * speed;
-            
-            this.size = Math.random() * 2.5 + 1;
-            this.life = 1;
-            this.decay = Math.random() * 0.02 + 0.01;
-        }
+class FloatingWord {
+    constructor(text, x, y, targetX, targetY) {
+        this.text = text;
+        this.x = x;
+        this.y = y;
+        this.targetX = targetX;
+        this.targetY = targetY;
+        this.alpha = 0;
+        this.scale = 1;
+        this.isAtTarget = false;
     }
-
     update() {
-        if (this.type === "float") {
-            this.y += this.speedY;
-            this.x += this.speedX;
-            if (this.y < 0) this.y = canvas.height;
-        } else {
-            this.x += this.speedX;
-            this.y += this.speedY;
-            this.speedX *= 0.95;
-            this.speedY *= 0.95;
-            this.life -= this.decay;
+        // Movimiento suave hacia la posición final (easing)
+        let dx = this.targetX - this.x;
+        let dy = this.targetY - this.y;
+        this.x += dx * 0.08;
+        this.y += dy * 0.08;
+
+        // Aparición gradual
+        if (this.alpha < 1) this.alpha += 0.05;
+
+        // Comprobar si está cerca del objetivo
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) {
+            this.isAtTarget = true;
+            this.x = this.targetX;
+            this.y = this.targetY;
         }
     }
-
     draw() {
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.save();
+        ctx.globalAlpha = this.alpha;
+        ctx.fillStyle = '#00bfff'; // Color azul brillante
+        ctx.shadowColor = '#00ffff';
+        ctx.shadowBlur = 10;
+        ctx.font = 'bold 20px Arial';
+        // Centramos el texto en sus coordenadas
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(this.text, this.x, this.y);
+        ctx.restore();
     }
 }
 
-// Inicializar partículas flotantes
-for (let i = 0; i < FLOAT_COUNT; i++) {
-    floatParticles.push(new Particle(null, null, "float"));
-}
-
-function spawnHeartBurst(x, y) {
-    const count = 140;
-    for (let i = 0; i < count; i++) {
-        burstParticles.push(new Particle(x, y, "burst"));
+function getHeartPoints(centerX, centerY, numPoints) {
+    heartTargets = [];
+    // Ecuaciones paramétricas para la forma de un corazón
+    // t va de 0 a 2*PI para completar el ciclo
+    for (let i = 0; i < numPoints; i++) {
+        const t = (i / numPoints) * Math.PI * 2;
+        const hx = 16 * Math.pow(Math.sin(t), 3);
+        const hy = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+        
+        const scale = 15; // Ajusta el tamaño del corazón
+        heartTargets.push({
+            x: centerX + hx * scale,
+            y: centerY + hy * scale
+        });
     }
+    return heartTargets;
 }
-
-window.addEventListener('click', (event) => {
-    spawnHeartBurst(event.clientX, event.clientY);
-});
 
 function animate() {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    // Fondo oscuro con estela suave para dar sensación de fluidez
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    floatParticles.forEach(p => {
-        p.update();
-        p.draw();
-    });
+    if (animationState === 'forming') {
+        // Añade una palabra nueva cada ciertos fotogramas
+        if (words.length < heartTargets.length && words.length === formationIndex) {
+            const clickX = words.length === 0 ? canvas.width / 2 : words[0].x;
+            const clickY = words.length === 0 ? canvas.height / 2 : words[0].y;
+            const target = heartTargets[formationIndex];
+            
+            // Empiezan desde el centro o desde la posición anterior para un efecto fluido
+            let startX = words.length === 0 ? clickX : words[formationIndex-1].x;
+            let startY = words.length === 0 ? clickY : words[formationIndex-1].y;
 
-    for (let i = burstParticles.length - 1; i >= 0; i--) {
-        const p = burstParticles[i];
-        p.update();
-        p.draw();
-        if (p.life <= 0) {
-            burstParticles.splice(i, 1);
+            words.push(new FloatingWord("te amo", startX, startY, target.x, target.y));
+            formationIndex++;
+        }
+
+        // Comprobar si todos los elementos llegaron al objetivo
+        let allArrived = true;
+        words.forEach(word => word.update());
+        if (words.length > 0 && words.length === heartTargets.length) {
+            words.forEach(word => {
+                if (!word.isAtTarget) allArrived = false;
+            });
+        } else {
+            allArrived = false;
+        }
+
+        if (allArrived) {
+            animationState = 'formed';
+            fadeTimer = 0;
+        }
+    } else if (animationState === 'formed') {
+        // Mantenerlo formado unos instantes
+        fadeTimer++;
+        if (fadeTimer > 80) {
+            animationState = 'fading';
+        }
+    } else if (animationState === 'fading') {
+        // Desvanecer todos los elementos a la vez
+        let allFaded = true;
+        words.forEach(word => {
+            word.alpha -= 0.03;
+            if (word.alpha <= 0) word.alpha = 0;
+            if (word.alpha > 0) allFaded = false;
+        });
+        
+        if (allFaded) {
+            // Limpiar para el siguiente clic
+            words = [];
+            formationIndex = 0;
+            animationState = 'idle';
         }
     }
+
+    // Asegurar que las palabras en movimiento siempre se dibujen
+    words.forEach(word => word.draw());
 
     requestAnimationFrame(animate);
 }
 
+window.addEventListener('click', (e) => {
+    // Si ya hay una animación en curso, la reiniciamos desde el clic
+    const clickX = e.clientX;
+    const clickY = e.clientY;
+    
+    getHeartPoints(clickX, clickY, 90); // 90 palabras para formar el corazón
+    animationState = 'forming';
+    words = [];
+    formationIndex = 0;
+});
+
+// Iniciar el bucle de animación
 animate();
